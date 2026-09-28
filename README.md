@@ -97,8 +97,10 @@ git pull && docker compose up -d --build     # update
 
 ### Behind an existing reverse proxy
 
-`docker compose up -d --build app` starts only the app, published on
-`127.0.0.1:4000` (UI and API) and `127.0.0.1:4001` (proxy). The proxy host needs
+`docker compose up -d --build app` starts only the app. Its ports are published on
+all interfaces (`0.0.0.0`): 4000 for the UI and API, 4001 for the proxy. They speak
+plain HTTP, and Docker publishes them past host firewalls such as ufw, so close them
+in your cloud firewall if they should only be reached through the reverse proxy. The proxy host needs
 streaming, long timeouts (a parked request waits for Step or Continue) and no
 added forwarding headers. For nginx:
 
