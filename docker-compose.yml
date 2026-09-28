@@ -1,0 +1,46 @@
+# Full deploy: the app plus Caddy for TLS on two hosts.
+#   cp .env.example .env   # set SITE_DOMAIN and PROXY_DOMAIN
+#   docker compose up -d --build
+#
+# Already running nginx or another reverse proxy on the host? Start only the app
+# (`docker compose up -d --build app`) and point it at 127.0.0.1:4000 and :4001.
+#
+# Sessions, history and held requests live in memory: run a single replica,
+# and expect every restart or redeploy to clear them.
+
+services:
+  app:
+    build: .
+    image: proxy-moxy
+    restart: unless-stopped
+    init: true
+    environment:
+      PUBLIC_PROXY_URL: https://${PROXY_DOMAIN:-proxy.localhost}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Any other variable from the README "Environment" table can be added here.
+    ports:
+      # Loopback only: for a reverse proxy on the host. Caddy uses the compose network.
+      - "127.0.0.1:4000:4000"
+      - "127.0.0.1:4001:4001"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN:-localhost}
+      PROXY_DOMAIN: ${PROXY_DOMAIN:-proxy.localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  caddy-data:
+  caddy-config:

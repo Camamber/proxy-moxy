@@ -1,0 +1,25 @@
+# Certificates are automatic: Let's Encrypt for public domains,
+# Caddy's local CA for *.localhost during a local run.
+
+{$SITE_DOMAIN} {
+	# UI and API. SSE responses are flushed immediately by Caddy.
+	reverse_proxy app:4000
+}
+
+{$PROXY_DOMAIN} {
+	reverse_proxy app:4001 {
+		# Stream bodies straight through; Caddy sets no upstream timeouts by default,
+		# so a request parked at a breakpoint can wait for Step / Continue.
+		flush_interval -1
+
+		# Keep the proxy transparent: neither the history nor the target should see
+		# headers added by this edge.
+		header_up -X-Forwarded-For
+		header_up -X-Forwarded-Proto
+		header_up -X-Forwarded-Host
+		header_up -Via
+		transport http {
+			compression off # do not add Accept-Encoding: gzip on the client's behalf
+		}
+	}
+}

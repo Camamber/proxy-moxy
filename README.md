@@ -51,6 +51,66 @@ Put `site.com` in front of the API port and `proxy.site.com` in front of the
 proxy port, and set `PUBLIC_PROXY_URL=https://proxy.site.com` so the UI shows
 the public address.
 
+## Deploy with Docker
+
+Files: [`Dockerfile`](Dockerfile), [`docker-compose.yml`](docker-compose.yml),
+[`deploy/Caddyfile`](deploy/Caddyfile), [`.env.example`](.env.example).
+
+The image runs the backend from its TypeScript sources on Node 24 LTS and serves
+the built UI on the API port. Compose puts Caddy in front: it obtains TLS
+certificates and routes `SITE_DOMAIN` to the UI and API, `PROXY_DOMAIN` to the proxy.
+
+**Run a single replica.** Sessions, history and held requests live in memory,
+so every restart or redeploy clears them.
+
+### On a server
+
+DNS for both domains must point at the server and ports 80 and 443 must be open,
+so Caddy can obtain certificates.
+
+```sh
+git clone <repo> proxy-moxy && cd proxy-moxy
+cp .env.example .env              # set SITE_DOMAIN and PROXY_DOMAIN
+docker compose up -d --build
+```
+
+```sh
+docker compose ps                 # app should be "healthy"
+docker compose logs -f app
+git pull && docker compose up -d --build     # update
+```
+
+### Behind an existing reverse proxy
+
+`docker compose up -d --build app` starts only the app, published on
+`127.0.0.1:4000` (UI and API) and `127.0.0.1:4001` (proxy). The proxy host needs
+streaming, long timeouts (a parked request waits for Step or Continue) and no
+added forwarding headers. For nginx:
+
+```nginx
+location / {
+  proxy_pass http://127.0.0.1:4001;
+  proxy_http_version 1.1;
+  proxy_set_header Connection "";
+  proxy_buffering off;
+  proxy_request_buffering off;
+  proxy_read_timeout 1h;
+  proxy_send_timeout 1h;
+}
+```
+
+### Image only
+
+```sh
+docker build -t proxy-moxy .
+docker run -d -p 4000:4000 -p 4001:4001 -e PUBLIC_PROXY_URL=https://proxy.site.com proxy-moxy
+```
+
+### Locally
+
+Without a `.env`, `docker compose up -d --build` serves `https://localhost` and
+`https://proxy.localhost` with certificates from Caddy's local CA, so browsers warn.
+
 ## Backend
 
 ### Proxy listener (`PROXY_PORT`, default 4001)
@@ -103,7 +163,7 @@ fallback, so `/:uid` works on the same origin.
 
 | Variable              | Default                     | Notes                                      |
 | --------------------- | --------------------------- | ------------------------------------------ |
-| `HOST`                | `127.0.0.1`                 | bind address for both listeners            |
+| `HOST`                | `127.0.0.1`                 | bind address for both listeners; `0.0.0.0` in the Docker image |
 | `API_PORT`            | `4000`                      |                                            |
 | `PROXY_PORT`          | `4001`                      |                                            |
 | `PUBLIC_PROXY_URL`    | `http://<host>:<proxy-port>`| shown in the UI                            |
