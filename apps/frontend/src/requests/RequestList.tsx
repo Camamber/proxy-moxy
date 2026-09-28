@@ -1,4 +1,4 @@
-import type { BreakpointStage, RequestRecord } from '@proxy-moxy/shared';
+import { matchesUrlFilter, splitPatterns, type BreakpointStage, type RequestRecord } from '@proxy-moxy/shared';
 import { useMemo, useState } from 'react';
 import { RequestRow } from './RequestRow.tsx';
 
@@ -12,23 +12,43 @@ interface Props {
 
 export function RequestList({ records, onClear, onContinue, onStepInto, onEdit }: Props) {
   const [openId, setOpenId] = useState<string | null>(null);
-  const newestFirst = useMemo(() => [...records].reverse(), [records]);
+  const [query, setQuery] = useState('');
+  const patterns = useMemo(() => splitPatterns(query), [query]);
+  const visible = useMemo(
+    () => records.filter((record) => matchesUrlFilter(record.request.url, patterns)).reverse(),
+    [records, patterns],
+  );
+  const filtering = patterns.length > 0;
 
   return (
     <section className="panel">
       <div className="panel-head">
         <h2>
-          Requests<span className="count">{records.length}</span>
+          Requests<span className="count">{filtering ? `${visible.length} of ${records.length}` : records.length}</span>
         </h2>
-        <button onClick={onClear} disabled={records.length === 0}>
-          Clear
-        </button>
+        <div className="list-tools">
+          <input
+            className="url-filter"
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Filter by URL: users, */orders/*"
+            aria-label="Filter requests by URL"
+            title="Wildcard search over the full URL: * matches anything, several patterns separated by commas, case-insensitive"
+            spellCheck={false}
+          />
+          <button onClick={onClear} disabled={records.length === 0} title="Delete every recorded request in this session">
+            Clear history
+          </button>
+        </div>
       </div>
       {records.length === 0 ? (
         <p className="empty">No requests yet. Send one through the proxy endpoint above.</p>
+      ) : visible.length === 0 ? (
+        <p className="empty">No requests match {patterns.join(', ')}.</p>
       ) : (
         <div className="list">
-          {newestFirst.map((record) => (
+          {visible.map((record) => (
             <RequestRow
               key={record.id}
               record={record}

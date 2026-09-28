@@ -1,7 +1,9 @@
 import { RequestList } from '../requests/RequestList.tsx';
 import { CopyButton } from '../ui/CopyButton.tsx';
 import { ContinueIcon, PauseIcon } from '../ui/icons.tsx';
+import { isDefaultPauseFilter } from '@proxy-moxy/shared';
 import { CreateSession } from './CreateSession.tsx';
+import { PauseFilterPanel } from './PauseFilterPanel.tsx';
 import { ProxyUrlPanel } from './ProxyUrlPanel.tsx';
 import { useSession, type LiveStatus } from './useSession.ts';
 
@@ -13,8 +15,21 @@ interface Props {
 const STATUS_LABEL: Record<LiveStatus, string> = { connecting: 'connecting', live: 'live', offline: 'reconnecting' };
 
 export function SessionPage({ uid, onNewSession }: Props) {
-  const { phase, session, records, status, error, configure, clear, pause, resume, stepInto, continueRequest, edit } =
-    useSession(uid);
+  const {
+    phase,
+    session,
+    records,
+    status,
+    error,
+    configure,
+    clear,
+    pause,
+    resume,
+    setPauseFilter,
+    stepInto,
+    continueRequest,
+    edit,
+  } = useSession(uid);
   const heldCount = records.filter((record) => record.held).length;
   const paused = session?.paused ?? false;
 
@@ -28,7 +43,11 @@ export function SessionPage({ uid, onNewSession }: Props) {
           <CopyButton text={window.location.href} label="Copy link" />
         </span>
         <span className="spacer" />
-        {session && paused && <span className="badge paused">paused · {heldCount} held</span>}
+        {session && paused && (
+          <span className="badge paused">
+            paused · {heldCount} held{isDefaultPauseFilter(session.pauseFilter) ? '' : ' · filtered'}
+          </span>
+        )}
         {session && (
           <button
             className={paused ? 'icon-button primary' : 'icon-button'}
@@ -49,6 +68,7 @@ export function SessionPage({ uid, onNewSession }: Props) {
       {phase === 'ready' && session && (
         <>
           <ProxyUrlPanel proxyUrl={session.proxyUrl} baseUrl={session.baseUrl} onChangeBaseUrl={configure} />
+          <PauseFilterPanel filter={session.pauseFilter} onSave={setPauseFilter} />
           <RequestList records={records} onClear={clear} onContinue={continueRequest} onStepInto={stepInto} onEdit={edit} />
         </>
       )}

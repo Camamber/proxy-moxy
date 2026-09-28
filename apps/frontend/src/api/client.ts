@@ -1,4 +1,4 @@
-import type { RequestEdit, RequestRecord, SessionConfig, SessionEvent, SessionInfo } from '@proxy-moxy/shared';
+import type { PauseFilter, RequestEdit, RequestRecord, SessionConfig, SessionEvent, SessionInfo } from '@proxy-moxy/shared';
 
 export interface SubscribeHandlers {
   onEvent(event: SessionEvent): void;
@@ -52,6 +52,9 @@ export const api = {
   pause: (uid: string) => send<SessionInfo>('POST', `/api/sessions/${uid}/pause`),
 
   resume: (uid: string) => send<SessionInfo>('POST', `/api/sessions/${uid}/resume`),
+
+  /** Which requests a paused session stops; applies from the next stop. */
+  setPauseFilter: (uid: string, filter: PauseFilter) => send<SessionInfo>('PUT', `/api/sessions/${uid}/pause-filter`, filter),
 
   /** Step into: moves a parked request to its next stop. */
   step: (uid: string, id: string) => send<void>('POST', `/api/sessions/${uid}/requests/${id}/step`),

@@ -42,6 +42,9 @@ curl "http://127.0.0.1:4001/<session-uid>/get?hello=world"
 ```
 
 The UI shows the proxy URL next to the base URL and builds example requests for a path.
+The history can be searched by URL: `users` finds URLs that contain it, `*` matches
+anything (`*/orders/*/items`), several patterns are separated by commas, and case is
+ignored. **Clear history** deletes the session's recorded requests.
 
 ### Production-style run
 
@@ -158,6 +161,18 @@ At each stop the controls follow the VS Code debugger: **Step into** moves the
 request to its next stop, **Continue** runs it to the end without stopping again.
 Continue applies to that one request; others keep stopping while the session is paused.
 
+**Pause filter.** Each session has a filter that decides which requests stop while
+it is paused; everything else passes straight through, streamed as usual. It has
+three parts, and empty lists match everything:
+
+- `methods`: e.g. `POST`, `PUT`.
+- `paths`: wildcards matched against the path after `/<session-uid>`, without the
+  query string. `*` matches anything, slashes included: `/users/*`, `*.json`.
+- `stages`: `request`, `response` or both (the default).
+
+The filter is checked at each stop, so a change also applies to requests already
+in flight. Requests that are already parked stay parked.
+
 Parked bodies are buffered whole so they can be replaced; edited bodies are sent
 uncompressed with a recomputed `content-length`. A request that is already in
 flight when you pause stops at the `response` stop. `Resume` releases every
@@ -172,6 +187,7 @@ as an error and its stop is released.
 | `PUT`    | `/api/sessions/:uid`              | `{ baseUrl }`: create the session (201) or change its base URL (200); 400 with a reason for an invalid URL |
 | `GET`    | `/api/sessions/:uid/requests`     | recorded requests, oldest first                     |
 | `DELETE` | `/api/sessions/:uid/requests`     | clear the history                                   |
+| `PUT`    | `/api/sessions/:uid/pause-filter` | `{ methods, paths, stages }`: which requests stop while paused; 400 with a reason if invalid |
 | `POST`   | `/api/sessions/:uid/pause`        | stop requests at breakpoints                        |
 | `POST`   | `/api/sessions/:uid/resume`       | release every parked request and unpause            |
 | `POST`   | `/api/sessions/:uid/requests/:id/step` | step into: move a parked request to its next stop (409 if not parked) |

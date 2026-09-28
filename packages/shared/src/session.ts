@@ -55,11 +55,25 @@ export interface RequestRecord {
   error: string | null;
 }
 
+/**
+ * Which requests a paused session stops. Everything else passes straight through.
+ * Empty `methods` or `paths` match everything.
+ */
+export interface PauseFilter {
+  /** Upper-case HTTP methods. */
+  methods: string[];
+  /** Globs matched against the path after `/<uid>`, without the query; `*` matches any characters. */
+  paths: string[];
+  /** Stops that apply; at least one. */
+  stages: BreakpointStage[];
+}
+
 export interface Session {
   uid: string;
   createdAt: string;
   /** Real server this session forwards to; the path after `/<uid>` is appended to it. */
   baseUrl: string;
+  pauseFilter: PauseFilter;
   requestCount: number;
   /** While paused, new requests and responses stop at breakpoints. */
   paused: boolean;

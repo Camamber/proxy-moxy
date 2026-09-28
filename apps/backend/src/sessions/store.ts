@@ -1,11 +1,19 @@
 import { EventEmitter } from 'node:events';
-import type { RequestRecord, Session, SessionConfig, SessionEvent } from '@proxy-moxy/shared';
+import {
+  DEFAULT_PAUSE_FILTER,
+  type PauseFilter,
+  type RequestRecord,
+  type Session,
+  type SessionConfig,
+  type SessionEvent,
+} from '@proxy-moxy/shared';
 
 interface Entry {
   uid: string;
   createdAt: string;
   baseUrl: string;
   paused: boolean;
+  pauseFilter: PauseFilter;
   records: RequestRecord[];
 }
 
@@ -40,7 +48,14 @@ export class SessionStore {
     let entry = this.#entries.get(uid);
     const created = !entry;
     if (!entry) {
-      entry = { uid, createdAt: new Date().toISOString(), baseUrl: config.baseUrl, paused: false, records: [] };
+      entry = {
+        uid,
+        createdAt: new Date().toISOString(),
+        baseUrl: config.baseUrl,
+        paused: false,
+        pauseFilter: DEFAULT_PAUSE_FILTER,
+        records: [],
+      };
       this.#entries.set(uid, entry);
     } else {
       entry.baseUrl = config.baseUrl;
@@ -55,6 +70,16 @@ export class SessionStore {
     const entry = this.#entries.get(uid);
     if (!entry) return null;
     entry.paused = paused;
+    const session = summarize(entry);
+    this.#events.emit(uid, { type: 'session', session } satisfies SessionEvent);
+    return session;
+  }
+
+  /** Null when the session does not exist. Applies to the next stop; parked requests stay parked. */
+  setPauseFilter(uid: string, filter: PauseFilter): Session | null {
+    const entry = this.#entries.get(uid);
+    if (!entry) return null;
+    entry.pauseFilter = filter;
     const session = summarize(entry);
     this.#events.emit(uid, { type: 'session', session } satisfies SessionEvent);
     return session;
@@ -103,5 +128,10 @@ function summarize(entry: Entry): Session {
     baseUrl: entry.baseUrl,
     requestCount: entry.records.length,
     paused: entry.paused,
+    pauseFilter: {
+      methods: [...entry.pauseFilter.methods],
+      paths: [...entry.pauseFilter.paths],
+      stages: [...entry.pauseFilter.stages],
+    },
   };
 }

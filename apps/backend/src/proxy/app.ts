@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { proxy } from 'hono/proxy';
-import type { RequestRecord } from '@proxy-moxy/shared';
+import { shouldPause, type BreakpointStage, type RequestRecord } from '@proxy-moxy/shared';
 import { bufferSource, EMPTY_BODY, toCapturedBody } from '../capture/body.ts';
 import { headersToRecord } from '../capture/headers.ts';
 import { BodyCapture } from '../capture/stream.ts';
@@ -24,8 +24,8 @@ const USAGE = 'Use /<session-uid>/<path>';
  * included, with `hono/proxy` and records it. Unknown sessions get a 404.
  *
  * Running session: bodies stream through, the history keeps the first bytes of each.
- * Paused session: the request is buffered and parked before the upstream call, and the
- * response is buffered and parked before delivery. Each stop waits for step into (go to the
+ * Paused session: requests that match its pause filter are buffered and parked before the
+ * upstream call and/or before delivery; the rest are handled as in a running session. Each stop waits for step into (go to the
  * next stop), continue (run to the end, skipping later stops) or resume, and applies whatever
  * the user edited meanwhile.
  */
@@ -43,7 +43,13 @@ export function createProxyApp({ store, holds, config, log }: ProxyDeps): Hono {
     if (!session) return c.json({ error: `Unknown session "${uid}". Create it in the UI first.` }, 404);
 
     const target = joinTarget(session.baseUrl, path.rest, url.search);
-    const paused = session.paused;
+    // Re-read the session at each stop: pausing or changing the filter mid-flight applies to later stops.
+    const forwardedPath = path.rest || '/';
+    const stopsAt = (stage: BreakpointStage): boolean => {
+      const current = store.get(uid);
+      return !!current?.paused && shouldPause(current.pauseFilter, stage, c.req.method, forwardedPath);
+    };
+    const paused = stopsAt('request');
     const requestHeaders = headersToRecord(c.req.raw.headers);
     const tracker = new Tracker(store, log, {
       id: crypto.randomUUID(),
@@ -127,7 +133,7 @@ export function createProxyApp({ store, holds, config, log }: ProxyDeps): Hono {
       }
 
       // --- response breakpoint (also catches requests that were in flight when the session paused) ---
-      if (!runToEnd && store.get(uid)?.paused) {
+      if (!runToEnd && stopsAt('response')) {
         const original = Buffer.from(await upstream.arrayBuffer());
         tracker.update({
           ...requestPatch(),

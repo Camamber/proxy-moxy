@@ -3,6 +3,7 @@ import { streamSSE } from 'hono/streaming';
 import {
   isSessionUid,
   parseBaseUrl,
+  parsePauseFilter,
   type RequestEdit,
   type RequestRecord,
   type Session,
@@ -67,6 +68,12 @@ export function createSessionsApp({ store, holds, proxyBaseUrl }: SessionsDeps):
       if (!parsed.ok) return c.json({ error: parsed.error }, 400);
       const { session, created } = store.save(c.get('uid'), { baseUrl: parsed.baseUrl });
       return c.json(toInfo(session), created ? 201 : 200);
+    })
+
+    .put('/:uid/pause-filter', requireSession, async (c) => {
+      const parsed = parsePauseFilter(await c.req.json().catch(() => null));
+      if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+      return c.json(toInfo(store.setPauseFilter(c.get('uid'), parsed.filter) as Session));
     })
 
     .post('/:uid/pause', requireSession, (c) => c.json(toInfo(store.setPaused(c.get('uid'), true) as Session)))

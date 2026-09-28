@@ -81,3 +81,22 @@ test('subscribers see session, request and cleared events until they unsubscribe
   assert.deepEqual(seen, ['session:false', 'session:true', 'request:1', 'cleared']);
   assert.deepEqual(store.listRequests('s1').map((r) => r.id), ['2']);
 });
+
+test('the pause filter defaults to everything, can be changed, and is announced', () => {
+  const store = new SessionStore({ historyLimit: 10 });
+  assert.equal(store.setPauseFilter('ghost', { methods: [], paths: [], stages: ['request'] }), null);
+
+  store.save('f', BASE);
+  assert.deepEqual(store.get('f')?.pauseFilter, { methods: [], paths: [], stages: ['request', 'response'] });
+
+  const seen: SessionEvent[] = [];
+  store.subscribe('f', (event) => seen.push(event));
+  const updated = store.setPauseFilter('f', { methods: ['POST'], paths: ['/users/*'], stages: ['response'] });
+  assert.deepEqual(updated?.pauseFilter, { methods: ['POST'], paths: ['/users/*'], stages: ['response'] });
+  assert.equal(seen[0]?.type === 'session' && seen[0].session.pauseFilter.paths[0], '/users/*');
+
+  updated?.pauseFilter.paths.push('/mutated'); // callers get copies
+  assert.deepEqual(store.get('f')?.pauseFilter.paths, ['/users/*']);
+  store.save('f', { baseUrl: 'https://other.example.com' }); // reconfiguring keeps the filter
+  assert.deepEqual(store.get('f')?.pauseFilter.methods, ['POST']);
+});

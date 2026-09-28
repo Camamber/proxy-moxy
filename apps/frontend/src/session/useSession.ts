@@ -1,4 +1,4 @@
-import type { BreakpointStage, RequestRecord, SessionInfo } from '@proxy-moxy/shared';
+import type { BreakpointStage, PauseFilter, RequestRecord, SessionInfo } from '@proxy-moxy/shared';
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api/client.ts';
 import { mergeRecords, upsertRecord } from './records.ts';
@@ -16,6 +16,7 @@ export interface SessionActions {
   clear(): Promise<void>;
   pause(): Promise<void>;
   resume(): Promise<void>;
+  setPauseFilter(filter: PauseFilter): Promise<void>;
   /** Moves a parked request to its next stop. */
   stepInto(id: string): Promise<void>;
   /** Runs a parked request to the end, skipping its remaining stops. */
@@ -132,6 +133,7 @@ export function useSession(uid: string): SessionState {
   }, [uid]);
   const pause = useCallback(async () => setSession(await api.pause(uid)), [uid]);
   const resume = useCallback(async () => setSession(await api.resume(uid)), [uid]);
+  const setPauseFilter = useCallback(async (filter: PauseFilter) => setSession(await api.setPauseFilter(uid, filter)), [uid]);
   const stepInto = useCallback((id: string) => api.step(uid, id), [uid]);
   const continueRequest = useCallback((id: string) => api.continue(uid, id), [uid]);
   const edit = useCallback(
@@ -142,7 +144,7 @@ export function useSession(uid: string): SessionState {
     [uid],
   );
 
-  return { phase, session, records, status, error, configure, clear, pause, resume, stepInto, continueRequest, edit };
+  return { phase, session, records, status, error, configure, clear, pause, resume, setPauseFilter, stepInto, continueRequest, edit };
 }
 
 function message(err: unknown): string {

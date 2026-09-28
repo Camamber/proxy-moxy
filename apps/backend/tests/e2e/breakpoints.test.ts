@@ -16,6 +16,7 @@ describe('breakpoints', () => {
   const step = (uid: string, id: string) => json(`${sessionUrl(uid)}/requests/${id}/step`, 'POST');
   const cont = (uid: string, id: string) => json(`${sessionUrl(uid)}/requests/${id}/continue`, 'POST');
   const edit = (uid: string, id: string, payload: unknown) => json<RequestRecord>(`${sessionUrl(uid)}/requests/${id}`, 'PATCH', payload);
+  const setFilter = (uid: string, filter: unknown) => json<SessionInfo & { error?: string }>(`${sessionUrl(uid)}/pause-filter`, 'PUT', filter);
   const heldAt = (uid: string, stage: 'request' | 'response') => recordWhere(backend, uid, (r) => r.held && r.stage === stage);
   /** A session pointed at the echo upstream, already paused. */
   const pausedSession = async (uid: string) => {
@@ -152,5 +153,64 @@ describe('breakpoints', () => {
     assert.equal(failed.held, false);
     assert.equal((await step(uid, parked.id)).status, 409);
     await resume(uid);
+  });
+
+  test('the pause filter stops only matching paths; the rest pass through while paused', async () => {
+    const uid = 'flt1';
+    await pausedSession(uid);
+    const set = await setFilter(uid, { paths: ['/users/*'] });
+    assert.equal(set.status, 200);
+    assert.deepEqual(set.body?.pauseFilter, { methods: [], paths: ['/users/*'], stages: ['request', 'response'] });
+
+    assert.equal((await proxied(backend, uid, '/orders/1')).status, 201); // not matched: answered although paused
+
+    const matched = proxied(backend, uid, '/users/7');
+    const parked = await heldAt(uid, 'request');
+    assert.equal(parked.request.url, `${upstreamUrl}/users/7`);
+    await resume(uid);
+    assert.equal((await matched).status, 201);
+  });
+
+  test('the pause filter can match a method and stop at the response only', async () => {
+    const uid = 'flt2';
+    await pausedSession(uid);
+    await setFilter(uid, { methods: ['post'], stages: ['response'] });
+
+    assert.equal((await proxied(backend, uid, '/read')).status, 201); // GET passes
+
+    const client = proxied(backend, uid, '/write', { method: 'POST', body: 'x' });
+    const parked = await heldAt(uid, 'response'); // went past the request stop
+    assert.equal(parked.request.method, 'POST');
+    assert.equal(parked.request.url, `${upstreamUrl}/write`);
+    await cont(uid, parked.id);
+    assert.equal((await client).status, 201);
+    await resume(uid);
+  });
+
+  test('a filter change applies to requests already in flight', async () => {
+    const uid = 'flt3';
+    await createSession(backend, uid, upstreamUrl);
+    const client = proxied(backend, uid, '/slow');
+    await recordWhere(backend, uid, (r) => r.stage === 'upstream');
+    await setFilter(uid, { paths: ['/other'] });
+    await pause(uid);
+    assert.equal((await client).status, 201); // its response no longer matches, so it is not parked
+    await resume(uid);
+  });
+
+  test('rejects invalid pause filters and unknown sessions', async () => {
+    await createSession(backend, 'flt4', upstreamUrl);
+    const cases: [unknown, RegExp][] = [
+      [[], /Send \{ methods, paths, stages \}/],
+      [{ methods: 'GET' }, /methods must be an array/],
+      [{ paths: ['users'] }, /start with \/ or \*/],
+      [{ stages: [] }, /at least one stop/],
+    ];
+    for (const [payload, error] of cases) {
+      const res = await setFilter('flt4', payload);
+      assert.equal(res.status, 400, JSON.stringify(payload));
+      assert.match(res.body?.error ?? '', error);
+    }
+    assert.equal((await setFilter('ghost', {})).status, 404);
   });
 });
