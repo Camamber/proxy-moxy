@@ -100,9 +100,19 @@ export function createEchoUpstream(): Server {
   });
 }
 
-/** Sends `target` through the session's proxy endpoint. */
-export function proxied(backend: Backend, uid: string, target: string, init?: RawInit): Promise<RawResponse> {
-  return raw(`${backend.proxyUrl}/${uid}?url=${encodeURIComponent(target)}`, init);
+/** Sends a request to `<proxy>/<uid><path>`; the path and query are forwarded to the session base URL. */
+export function proxied(backend: Backend, uid: string, path: string, init?: RawInit): Promise<RawResponse> {
+  return raw(`${backend.proxyUrl}/${uid}${path}`, init);
+}
+
+/** Creates (or reconfigures) a session through the API. */
+export async function createSession(backend: Backend, uid: string, baseUrl: string): Promise<void> {
+  const res = await raw(`${backend.apiUrl}/api/sessions/${uid}`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ baseUrl }),
+  });
+  if (res.status !== 200 && res.status !== 201) throw new Error(`createSession ${uid}: ${res.status} ${res.body}`);
 }
 
 export async function listRecords(backend: Backend, uid: string): Promise<RequestRecord[]> {

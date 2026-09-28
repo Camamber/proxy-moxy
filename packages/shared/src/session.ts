@@ -58,9 +58,16 @@ export interface RequestRecord {
 export interface Session {
   uid: string;
   createdAt: string;
+  /** Real server this session forwards to; the path after `/<uid>` is appended to it. */
+  baseUrl: string;
   requestCount: number;
   /** While paused, new requests and responses stop at breakpoints. */
   paused: boolean;
+}
+
+/** Body of `PUT /api/sessions/:uid`, which creates or reconfigures a session. */
+export interface SessionConfig {
+  baseUrl: string;
 }
 
 /** What the UI receives: the session plus the proxy URL to hand out. */

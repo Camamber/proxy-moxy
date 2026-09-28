@@ -1,6 +1,13 @@
 import { Hono, type Handler, type MiddlewareHandler } from 'hono';
 import { streamSSE } from 'hono/streaming';
-import { isSessionUid, type RequestEdit, type RequestRecord, type Session, type SessionInfo } from '@proxy-moxy/shared';
+import {
+  isSessionUid,
+  parseBaseUrl,
+  type RequestEdit,
+  type RequestRecord,
+  type Session,
+  type SessionInfo,
+} from '@proxy-moxy/shared';
 import { editedBody } from '../capture/body.ts';
 import type { HoldRegistry, ReleaseMode } from '../proxy/holds.ts';
 import type { SessionStore } from '../sessions/store.ts';
@@ -16,16 +23,23 @@ type Env = { Variables: { uid: string } };
 
 const PING_INTERVAL_MS = 25_000;
 
-/** `/:uid`, `/:uid/requests`, `/:uid/events`, pause/resume and step/continue — mounted under `/api/sessions`. */
+/**
+ * Mounted under `/api/sessions`. `PUT /:uid` creates or reconfigures a session with its base URL;
+ * every other route needs an existing session and answers 404 otherwise.
+ */
 export function createSessionsApp({ store, holds, proxyBaseUrl }: SessionsDeps): Hono<Env> {
   const toInfo = (session: Session): SessionInfo => ({ ...session, proxyUrl: `${proxyBaseUrl}/${session.uid}` });
 
-  /** Sessions come into existence on first touch; an invalid uid is a client error. */
-  const ensureSession: MiddlewareHandler<Env> = async (c, next) => {
+  /** An invalid uid is a client error on every route. */
+  const validUid: MiddlewareHandler<Env> = async (c, next) => {
     const uid = c.req.param('uid') ?? '';
     if (!isSessionUid(uid)) return c.json({ error: 'Invalid session uid' }, 400);
-    store.getOrCreate(uid);
     c.set('uid', uid);
+    await next();
+  };
+
+  const requireSession: MiddlewareHandler<Env> = async (c, next) => {
+    if (!store.get(c.get('uid'))) return c.json({ error: 'Session not found' }, 404);
     await next();
   };
 
@@ -40,28 +54,39 @@ export function createSessionsApp({ store, holds, proxyBaseUrl }: SessionsDeps):
     };
 
   return new Hono<Env>()
-    .use('/:uid', ensureSession)
-    .use('/:uid/*', ensureSession)
-    .get('/:uid', (c) => c.json(toInfo(store.getOrCreate(c.get('uid')))))
+    .use('/:uid', validUid)
+    .use('/:uid/*', validUid)
 
-    .post('/:uid/pause', (c) => c.json(toInfo(store.setPaused(c.get('uid'), true))))
-    .post('/:uid/resume', (c) => {
+    .get('/:uid', (c) => {
+      const session = store.get(c.get('uid'));
+      return session ? c.json(toInfo(session)) : c.json({ error: 'Session not found' }, 404);
+    })
+    .put('/:uid', async (c) => {
+      const payload = (await c.req.json().catch(() => null)) as { baseUrl?: unknown } | null;
+      const parsed = parseBaseUrl(typeof payload?.baseUrl === 'string' ? payload.baseUrl : '');
+      if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+      const { session, created } = store.save(c.get('uid'), { baseUrl: parsed.baseUrl });
+      return c.json(toInfo(session), created ? 201 : 200);
+    })
+
+    .post('/:uid/pause', requireSession, (c) => c.json(toInfo(store.setPaused(c.get('uid'), true) as Session)))
+    .post('/:uid/resume', requireSession, (c) => {
       const uid = c.get('uid');
       // Unpause first so released requests do not stop again at the response breakpoint.
-      const session = store.setPaused(uid, false);
+      const session = store.setPaused(uid, false) as Session;
       const released = holds.releaseAll(uid);
       return c.json({ ...toInfo(session), released });
     })
 
-    .get('/:uid/requests', (c) => c.json({ requests: store.listRequests(c.get('uid')) }))
-    .delete('/:uid/requests', (c) => {
+    .get('/:uid/requests', requireSession, (c) => c.json({ requests: store.listRequests(c.get('uid')) }))
+    .delete('/:uid/requests', requireSession, (c) => {
       store.clearRequests(c.get('uid'));
       return c.body(null, 204);
     })
 
-    .post('/:uid/requests/:id/step', release('step'))
-    .post('/:uid/requests/:id/continue', release('continue'))
-    .patch('/:uid/requests/:id', async (c) => {
+    .post('/:uid/requests/:id/step', requireSession, release('step'))
+    .post('/:uid/requests/:id/continue', requireSession, release('continue'))
+    .patch('/:uid/requests/:id', requireSession, async (c) => {
       const uid = c.get('uid');
       const id = c.req.param('id');
       const hold = holds.get(id);
@@ -85,7 +110,7 @@ export function createSessionsApp({ store, holds, proxyBaseUrl }: SessionsDeps):
       return c.json(updated);
     })
 
-    .get('/:uid/events', (c) => {
+    .get('/:uid/events', requireSession, (c) => {
       c.header('x-accel-buffering', 'no');
       return streamSSE(c, async (stream) => {
         const uid = c.get('uid');

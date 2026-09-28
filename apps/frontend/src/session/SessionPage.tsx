@@ -1,6 +1,7 @@
 import { RequestList } from '../requests/RequestList.tsx';
 import { CopyButton } from '../ui/CopyButton.tsx';
 import { ContinueIcon, PauseIcon } from '../ui/icons.tsx';
+import { CreateSession } from './CreateSession.tsx';
 import { ProxyUrlPanel } from './ProxyUrlPanel.tsx';
 import { useSession, type LiveStatus } from './useSession.ts';
 
@@ -12,7 +13,8 @@ interface Props {
 const STATUS_LABEL: Record<LiveStatus, string> = { connecting: 'connecting', live: 'live', offline: 'reconnecting' };
 
 export function SessionPage({ uid, onNewSession }: Props) {
-  const { session, records, status, error, clear, pause, resume, stepInto, continueRequest, edit } = useSession(uid);
+  const { phase, session, records, status, error, configure, clear, pause, resume, stepInto, continueRequest, edit } =
+    useSession(uid);
   const heldCount = records.filter((record) => record.held).length;
   const paused = session?.paused ?? false;
 
@@ -26,27 +28,30 @@ export function SessionPage({ uid, onNewSession }: Props) {
           <CopyButton text={window.location.href} label="Copy link" />
         </span>
         <span className="spacer" />
-        {paused && (
-          <span className="badge paused">
-            paused · {heldCount} held
-          </span>
+        {session && paused && <span className="badge paused">paused · {heldCount} held</span>}
+        {session && (
+          <button
+            className={paused ? 'icon-button primary' : 'icon-button'}
+            onClick={paused ? resume : pause}
+            title={paused ? 'Resume: release every held request and stop pausing' : 'Pause: stop new requests at breakpoints'}
+          >
+            {paused ? <ContinueIcon /> : <PauseIcon />}
+            {paused ? 'Resume' : 'Pause'}
+          </button>
         )}
-        <button
-          className={paused ? 'icon-button primary' : 'icon-button'}
-          onClick={paused ? resume : pause}
-          disabled={!session}
-          title={paused ? 'Resume: release every held request and stop pausing' : 'Pause: stop new requests at breakpoints'}
-        >
-          {paused ? <ContinueIcon /> : <PauseIcon />}
-          {paused ? 'Resume' : 'Pause'}
-        </button>
-        <span className={`status-dot ${status}`}>{STATUS_LABEL[status]}</span>
+        {session && <span className={`status-dot ${status}`}>{STATUS_LABEL[status]}</span>}
         <button onClick={onNewSession}>New session</button>
       </header>
 
-      <ProxyUrlPanel proxyUrl={session?.proxyUrl ?? null} />
       {error && <div className="error">{error}</div>}
-      <RequestList records={records} onClear={clear} onContinue={continueRequest} onStepInto={stepInto} onEdit={edit} />
+      {phase === 'loading' && <p className="hint">Loading session…</p>}
+      {phase === 'missing' && <CreateSession uid={uid} onCreate={configure} />}
+      {phase === 'ready' && session && (
+        <>
+          <ProxyUrlPanel proxyUrl={session.proxyUrl} baseUrl={session.baseUrl} onChangeBaseUrl={configure} />
+          <RequestList records={records} onClear={clear} onContinue={continueRequest} onStepInto={stepInto} onEdit={edit} />
+        </>
+      )}
     </div>
   );
 }

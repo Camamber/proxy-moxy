@@ -1,9 +1,10 @@
 import { EventEmitter } from 'node:events';
-import type { RequestRecord, Session, SessionEvent } from '@proxy-moxy/shared';
+import type { RequestRecord, Session, SessionConfig, SessionEvent } from '@proxy-moxy/shared';
 
 interface Entry {
   uid: string;
   createdAt: string;
+  baseUrl: string;
   paused: boolean;
   records: RequestRecord[];
 }
@@ -15,7 +16,10 @@ export interface StoreOptions {
 
 export type SessionListener = (event: SessionEvent) => void;
 
-/** In-memory sessions with their request history. Emits an event per change so SSE clients stay live. */
+/**
+ * In-memory sessions with their request history. Sessions exist only once they have been
+ * saved with a base URL. Emits an event per change so SSE clients stay live.
+ */
 export class SessionStore {
   #entries = new Map<string, Entry>();
   #events = new EventEmitter();
@@ -26,18 +30,30 @@ export class SessionStore {
     this.#events.setMaxListeners(0);
   }
 
-  /** Sessions are addressed by uid and come into existence on first touch. */
-  getOrCreate(uid: string): Session {
-    return summarize(this.#entry(uid));
-  }
-
   get(uid: string): Session | null {
     const entry = this.#entries.get(uid);
     return entry ? summarize(entry) : null;
   }
 
-  setPaused(uid: string, paused: boolean): Session {
-    const entry = this.#entry(uid);
+  /** Creates the session or updates its configuration; history and pause state are kept. */
+  save(uid: string, config: SessionConfig): { session: Session; created: boolean } {
+    let entry = this.#entries.get(uid);
+    const created = !entry;
+    if (!entry) {
+      entry = { uid, createdAt: new Date().toISOString(), baseUrl: config.baseUrl, paused: false, records: [] };
+      this.#entries.set(uid, entry);
+    } else {
+      entry.baseUrl = config.baseUrl;
+    }
+    const session = summarize(entry);
+    this.#events.emit(uid, { type: 'session', session } satisfies SessionEvent);
+    return { session, created };
+  }
+
+  /** Null when the session does not exist. */
+  setPaused(uid: string, paused: boolean): Session | null {
+    const entry = this.#entries.get(uid);
+    if (!entry) return null;
     entry.paused = paused;
     const session = summarize(entry);
     this.#events.emit(uid, { type: 'session', session } satisfies SessionEvent);
@@ -52,9 +68,10 @@ export class SessionStore {
     return this.#entries.get(uid)?.records.findLast((record) => record.id === id) ?? null;
   }
 
-  /** Adds a record or replaces the one with the same id, then trims to `historyLimit`. */
+  /** Adds a record or replaces the one with the same id, then trims to `historyLimit`. Unknown sessions are ignored. */
   upsertRequest(record: RequestRecord): void {
-    const entry = this.#entry(record.sessionUid);
+    const entry = this.#entries.get(record.sessionUid);
+    if (!entry) return;
     const index = entry.records.findLastIndex((existing) => existing.id === record.id);
     if (index === -1) entry.records.push(record);
     else entry.records[index] = record;
@@ -67,7 +84,8 @@ export class SessionStore {
 
   clearRequests(uid: string): void {
     const entry = this.#entries.get(uid);
-    if (entry) entry.records = [];
+    if (!entry) return;
+    entry.records = [];
     this.#events.emit(uid, { type: 'cleared' } satisfies SessionEvent);
   }
 
@@ -76,17 +94,14 @@ export class SessionStore {
     this.#events.on(uid, listener);
     return () => this.#events.off(uid, listener);
   }
-
-  #entry(uid: string): Entry {
-    let entry = this.#entries.get(uid);
-    if (!entry) {
-      entry = { uid, createdAt: new Date().toISOString(), paused: false, records: [] };
-      this.#entries.set(uid, entry);
-    }
-    return entry;
-  }
 }
 
 function summarize(entry: Entry): Session {
-  return { uid: entry.uid, createdAt: entry.createdAt, requestCount: entry.records.length, paused: entry.paused };
+  return {
+    uid: entry.uid,
+    createdAt: entry.createdAt,
+    baseUrl: entry.baseUrl,
+    requestCount: entry.records.length,
+    paused: entry.paused,
+  };
 }

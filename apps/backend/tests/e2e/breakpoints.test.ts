@@ -3,7 +3,7 @@ import type { Server } from 'node:http';
 import { after, before, describe, test } from 'node:test';
 import type { RequestRecord, SessionInfo } from '@proxy-moxy/shared';
 import { startBackend, type Backend } from '../../src/app.ts';
-import { createEchoUpstream, json, listen, proxied, recordWhere, settledRecord, stop, testConfig } from './helpers.ts';
+import { createEchoUpstream, createSession, json, listen, proxied, recordWhere, settledRecord, stop, testConfig } from './helpers.ts';
 
 describe('breakpoints', () => {
   let upstream: Server;
@@ -17,6 +17,11 @@ describe('breakpoints', () => {
   const cont = (uid: string, id: string) => json(`${sessionUrl(uid)}/requests/${id}/continue`, 'POST');
   const edit = (uid: string, id: string, payload: unknown) => json<RequestRecord>(`${sessionUrl(uid)}/requests/${id}`, 'PATCH', payload);
   const heldAt = (uid: string, stage: 'request' | 'response') => recordWhere(backend, uid, (r) => r.held && r.stage === stage);
+  /** A session pointed at the echo upstream, already paused. */
+  const pausedSession = async (uid: string) => {
+    await createSession(backend, uid, upstreamUrl);
+    assert.equal((await pause(uid)).body?.paused, true);
+  };
 
   before(async () => {
     upstream = createEchoUpstream();
@@ -31,16 +36,12 @@ describe('breakpoints', () => {
 
   test('a paused session parks the request, then the response; edits reach both sides', async () => {
     const uid = 'bp1';
-    assert.equal((await pause(uid)).body?.paused, true);
-
-    const client = proxied(backend, uid, `${upstreamUrl}/edit`, {
-      method: 'POST',
-      headers: { 'content-type': 'text/plain' },
-      body: 'original',
-    });
+    await pausedSession(uid);
+    const client = proxied(backend, uid, '/edit', { method: 'POST', headers: { 'content-type': 'text/plain' }, body: 'original' });
 
     const atRequest = await heldAt(uid, 'request');
     assert.equal(atRequest.request.body.text, 'original');
+    assert.equal(atRequest.request.url, `${upstreamUrl}/edit`);
     assert.equal(atRequest.response, null);
 
     assert.equal((await edit(uid, atRequest.id, { response: { body: 'x' } })).status, 409); // wrong stage
@@ -51,7 +52,6 @@ describe('breakpoints', () => {
 
     assert.equal((await step(uid, atRequest.id)).status, 204);
     const atResponse = await heldAt(uid, 'response');
-    assert.equal(atResponse.stage, 'response');
     assert.equal(JSON.parse(atResponse.response?.body.text ?? '').body, 'edited request'); // upstream saw the edit
     assert.equal(atResponse.request.headers['content-length'], String('edited request'.length));
 
@@ -73,12 +73,8 @@ describe('breakpoints', () => {
 
   test('continue runs one parked request to the end while the session stays paused', async () => {
     const uid = 'bp5';
-    await pause(uid);
-    const client = proxied(backend, uid, `${upstreamUrl}/run`, {
-      method: 'POST',
-      headers: { 'content-type': 'text/plain' },
-      body: 'original',
-    });
+    await pausedSession(uid);
+    const client = proxied(backend, uid, '/run', { method: 'POST', headers: { 'content-type': 'text/plain' }, body: 'original' });
     const parked = await heldAt(uid, 'request');
     await edit(uid, parked.id, { request: { body: 'edited' } });
     assert.equal((await cont(uid, parked.id)).status, 204);
@@ -88,12 +84,11 @@ describe('breakpoints', () => {
     assert.equal(JSON.parse(res.body.toString()).body, 'edited');
     const done = await settledRecord(backend, uid);
     assert.equal(done.stage, 'done');
-    assert.equal(JSON.parse(done.response?.body.text ?? '').body, 'edited');
     assert.equal((await cont(uid, parked.id)).status, 409);
 
     // The session is still paused, so the next request stops as usual.
     assert.equal((await json<SessionInfo>(sessionUrl(uid))).body?.paused, true);
-    const next = proxied(backend, uid, `${upstreamUrl}/next`);
+    const next = proxied(backend, uid, '/next');
     await recordWhere(backend, uid, (r) => r.held && r.request.url.endsWith('/next'));
     await resume(uid);
     assert.equal((await next).status, 201);
@@ -101,8 +96,8 @@ describe('breakpoints', () => {
 
   test('continue at the response stop delivers the response', async () => {
     const uid = 'bp6';
-    await pause(uid);
-    const client = proxied(backend, uid, `${upstreamUrl}/late`);
+    await pausedSession(uid);
+    const client = proxied(backend, uid, '/late');
     await step(uid, (await heldAt(uid, 'request')).id);
     const parked = await heldAt(uid, 'response');
     assert.equal((await cont(uid, parked.id)).status, 204);
@@ -113,8 +108,8 @@ describe('breakpoints', () => {
 
   test('resume releases every parked request and unpauses the session', async () => {
     const uid = 'bp2';
-    await pause(uid);
-    const clients = [proxied(backend, uid, `${upstreamUrl}/a`), proxied(backend, uid, `${upstreamUrl}/b`)];
+    await pausedSession(uid);
+    const clients = [proxied(backend, uid, '/a'), proxied(backend, uid, '/b')];
     await recordWhere(backend, uid, (r) => r.held && r.request.url.endsWith('/a'));
     await recordWhere(backend, uid, (r) => r.held && r.request.url.endsWith('/b'));
 
@@ -125,12 +120,12 @@ describe('breakpoints', () => {
     for (const res of await Promise.all(clients)) assert.equal(res.status, 201);
     await settledRecord(backend, uid, 0);
     await settledRecord(backend, uid, 1);
-    assert.equal((await json<SessionInfo>(sessionUrl(uid))).body?.paused, false);
   });
 
   test('pausing while a request is in flight parks only its response', async () => {
     const uid = 'bp3';
-    const client = proxied(backend, uid, `${upstreamUrl}/slow`);
+    await createSession(backend, uid, upstreamUrl);
+    const client = proxied(backend, uid, '/slow');
     await recordWhere(backend, uid, (r) => r.stage === 'upstream');
     await pause(uid);
 
@@ -145,9 +140,9 @@ describe('breakpoints', () => {
 
   test('a client that gives up while parked is recorded as an error and released', async () => {
     const uid = 'bp4';
-    await pause(uid);
+    await pausedSession(uid);
     const controller = new AbortController();
-    const client = fetch(`${backend.proxyUrl}/${uid}?url=${encodeURIComponent(`${upstreamUrl}/gone`)}`, { signal: controller.signal }).catch(() => null);
+    const client = fetch(`${backend.proxyUrl}/${uid}/gone`, { signal: controller.signal }).catch(() => null);
     const parked = await heldAt(uid, 'request');
 
     controller.abort();

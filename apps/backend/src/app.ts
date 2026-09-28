@@ -39,7 +39,7 @@ export async function startBackend(config: BackendConfig, options: BackendOption
   );
 
   log.info(`api    ${api.url}${staticDir ? `  (serving ${staticDir})` : ''}`);
-  log.info(`proxy  ${proxy.url}  →  ${proxyBaseUrl}/<session-uid>?url=<target-url>`);
+  log.info(`proxy  ${proxy.url}  →  ${proxyBaseUrl}/<session-uid>/<path>`);
 
   return {
     store,

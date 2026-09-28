@@ -1,33 +1,22 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { resolveTarget } from '../../../src/proxy/target.ts';
+import { joinTarget, splitProxyPath } from '../../../src/proxy/target.ts';
 
-const params = (query: string) => new URLSearchParams(query);
-
-test('resolves the encoded target for a valid session uid', () => {
-  const resolved = resolveTarget('abc-123', params('url=https%3A%2F%2Fapi.example.com%2Fusers%3Fpage%3D2'));
-  assert.ok('target' in resolved);
-  assert.equal(resolved.uid, 'abc-123');
-  assert.equal(resolved.target.href, 'https://api.example.com/users?page=2');
+test('splits the session uid from the forwarded path', () => {
+  assert.deepEqual(splitProxyPath('/abc-123/users/1'), { uid: 'abc-123', rest: '/users/1' });
+  assert.deepEqual(splitProxyPath('/abc'), { uid: 'abc', rest: '' });
+  assert.deepEqual(splitProxyPath('/abc/'), { uid: 'abc', rest: '/' });
+  assert.deepEqual(splitProxyPath('/abc/a%20b/%2F'), { uid: 'abc', rest: '/a%20b/%2F' }); // encoding untouched
 });
 
-test('extra query params are appended to the target', () => {
-  const resolved = resolveTarget('s', params('url=https%3A%2F%2Fapi.example.com%2Fx%3Fa%3D1&b=2&url=ignored'));
-  assert.ok('target' in resolved);
-  assert.equal(resolved.target.href, 'https://api.example.com/x?a=1&b=2');
+test('rejects paths without a valid uid', () => {
+  for (const path of ['/', '', '/bad.uid/x', '//x']) assert.equal(splitProxyPath(path), null, path);
 });
 
-test('rejects bad uids and targets with the right status', () => {
-  const cases: [string, string, number][] = [
-    ['bad.uid', 'url=http://x', 404],
-    ['', 'url=http://x', 404],
-    ['s', '', 400],
-    ['s', 'url=not-a-url', 400],
-    ['s', 'url=ftp%3A%2F%2Fx', 400],
-  ];
-  for (const [uid, query, status] of cases) {
-    const resolved = resolveTarget(uid, params(query));
-    assert.ok('error' in resolved, `${uid}?${query}`);
-    assert.equal(resolved.status, status, `${uid}?${query}`);
-  }
+test('joins base URL, path and query', () => {
+  assert.equal(joinTarget('https://api.example.com', '/users/1', '?x=1').href, 'https://api.example.com/users/1?x=1');
+  assert.equal(joinTarget('https://api.example.com/v1', '/users', '').href, 'https://api.example.com/v1/users');
+  assert.equal(joinTarget('https://api.example.com/v1', '', '?q=a').href, 'https://api.example.com/v1?q=a');
+  assert.equal(joinTarget('https://api.example.com/v1', '/', '').href, 'https://api.example.com/v1/');
+  assert.equal(joinTarget('http://localhost:3000', '/a%20b', '').href, 'http://localhost:3000/a%20b');
 });

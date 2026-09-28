@@ -121,3 +121,20 @@ button.debug span { color: var(--text); }
 }
 .editor textarea:focus { outline: none; border-color: var(--accent); }
 .editor-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* --- session base URL --- */
+.mapping { display: grid; grid-template-columns: 80px 1fr; gap: 8px 12px; align-items: center; margin: 4px 0 8px; }
+.mapping .label { color: var(--muted); font-size: 12px; }
+.mapping .value { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.mapping .value code { overflow-wrap: anywhere; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
+
+.base-url-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.mapping .base-url-form { margin-top: 0; }
+.base-url-form input { flex: 1; min-width: 220px; }
+.form-error { flex-basis: 100%; }
+
+.hint.forwards { margin: 4px 0 0; }
+
+@media (max-width: 800px) {
+  .mapping { grid-template-columns: 1fr; gap: 4px; }
+}

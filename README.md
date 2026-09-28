@@ -2,8 +2,10 @@
 
 A session-scoped HTTP proxy with a live request inspector.
 
-1. Open `site.com/<session-uid>` — the session is created on first visit and kept in memory.
-2. Point your client at `proxy.site.com/<session-uid>?url=<target-url>`.
+1. Open `site.com/<session-uid>`. A new session asks for the base URL of the real
+   server, e.g. `https://api.example.com/v1`, and is kept in memory.
+2. Use `proxy.site.com/<session-uid>` as your client's base URL instead:
+   `proxy.site.com/<session-uid>/users/1?x=1` goes to `https://api.example.com/v1/users/1?x=1`.
 3. Every request that goes through the proxy shows up on the page in real time.
 
 By default the proxy is transparent: it forwards requests and responses untouched
@@ -18,7 +20,7 @@ run to the end.
 apps/backend      Hono on Node. API + proxy listeners, in-memory store.
                   tests/unit mirrors src; tests/e2e drives a real backend over HTTP.
 apps/frontend     Vite + React inspector UI.
-packages/shared   Types (Session, RequestRecord, SessionEvent) and uid helpers used by both.
+packages/shared   Types (Session, RequestRecord, SessionEvent), uid and base URL helpers used by both.
 ```
 
 Node ≥ 22.18 runs the TypeScript sources directly, so the backend and the shared
@@ -32,13 +34,14 @@ pnpm install
 pnpm dev            # backend on :4000 (API) and :4001 (proxy), Vite UI on :5173
 ```
 
-Open <http://localhost:5173/> — you are redirected to a fresh session. Then:
+Open <http://localhost:5173/>: you land on a fresh session, enter a base URL such as
+`https://httpbin.org`, and then:
 
 ```sh
-curl "http://127.0.0.1:4001/<session-uid>?url=https%3A%2F%2Fhttpbin.org%2Fget"
+curl "http://127.0.0.1:4001/<session-uid>/get?hello=world"
 ```
 
-The UI has a small builder that encodes the target URL for you.
+The UI shows the proxy URL next to the base URL and builds example requests for a path.
 
 ### Production-style run
 
@@ -132,14 +135,17 @@ Without a `.env`, `docker compose up -d --build` serves `https://localhost` and
 
 ### Proxy listener (`PROXY_PORT`, default 4001)
 
-`ANY /<session-uid>?url=<target-url>`
+`ANY /<session-uid>/<path>` forwards to `<base URL>/<path>`.
 
-- `url` must be an absolute http(s) URL, percent-encoded.
-- Any other query parameters are appended to the target URL.
+- The path after the uid and the whole query string are appended to the session's base URL,
+  with percent-encoding untouched. A bare `/<session-uid>` goes to the base URL itself.
+- The base URL may carry a path prefix: with `https://api.example.com/v1`,
+  `/<uid>/users` goes to `https://api.example.com/v1/users`.
 - Forwarded with `hono/proxy` on top of `fetch`: hop-by-hop headers are dropped, everything else goes through as-is.
 - Bodies are streamed through; the first `BODY_CAPTURE_LIMIT` bytes of each are kept for the history.
 - `fetch` transparently decompresses upstream bodies, so clients receive plain bytes without `content-encoding`.
-- Unknown session uids are created on the fly.
+- Unknown sessions get a 404 and nothing is recorded: create the session in the UI first.
+- A new base URL applies to the next request; requests already in flight keep their target.
 
 ### Breakpoints
 
@@ -162,7 +168,8 @@ as an error and its stop is released.
 
 | Method   | Path                              | Purpose                                             |
 | -------- | --------------------------------- | --------------------------------------------------- |
-| `GET`    | `/api/sessions/:uid`              | get-or-create the session; returns its proxy URL    |
+| `GET`    | `/api/sessions/:uid`              | the session with its base URL and proxy URL; 404 if it does not exist |
+| `PUT`    | `/api/sessions/:uid`              | `{ baseUrl }`: create the session (201) or change its base URL (200); 400 with a reason for an invalid URL |
 | `GET`    | `/api/sessions/:uid/requests`     | recorded requests, oldest first                     |
 | `DELETE` | `/api/sessions/:uid/requests`     | clear the history                                   |
 | `POST`   | `/api/sessions/:uid/pause`        | stop requests at breakpoints                        |
@@ -172,6 +179,10 @@ as an error and its stop is released.
 | `PATCH`  | `/api/sessions/:uid/requests/:id` | `{ request: { body } }` or `{ response: { body } }`, matching the stage it is parked at |
 | `GET`    | `/api/sessions/:uid/events`       | Server-Sent Events: `request` (upsert by id), `session`, `cleared` |
 | `GET`    | `/api/health`                     | liveness                                            |
+
+Every other session route answers 404 until the session has been created with `PUT`.
+A base URL is an http(s) origin with an optional path prefix; query strings, fragments and
+credentials are rejected, and trailing slashes are dropped.
 
 When `apps/frontend/dist` exists the API listener also serves it with an SPA
 fallback, so `/:uid` works on the same origin.

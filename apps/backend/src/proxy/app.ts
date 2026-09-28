@@ -8,7 +8,7 @@ import type { BackendConfig } from '../config.ts';
 import type { Logger } from '../logger.ts';
 import type { SessionStore } from '../sessions/store.ts';
 import type { HoldRegistry } from './holds.ts';
-import { resolveTarget } from './target.ts';
+import { joinTarget, splitProxyPath } from './target.ts';
 
 export interface ProxyDeps {
   store: SessionStore;
@@ -17,10 +17,11 @@ export interface ProxyDeps {
   log: Logger;
 }
 
-const USAGE = 'Use /<session-uid>?url=<target-url>';
+const USAGE = 'Use /<session-uid>/<path>';
 
 /**
- * `ANY /<session-uid>?url=<target>`: forwards the request with `hono/proxy` and records it.
+ * `ANY /<session-uid>/<path>`: forwards the request to `<session base URL>/<path>`, query string
+ * included, with `hono/proxy` and records it. Unknown sessions get a 404.
  *
  * Running session: bodies stream through, the history keeps the first bytes of each.
  * Paused session: the request is buffered and parked before the upstream call, and the
@@ -32,12 +33,17 @@ export function createProxyApp({ store, holds, config, log }: ProxyDeps): Hono {
   const app = new Hono();
   const limit = config.bodyCaptureLimit;
 
-  app.all('/:uid', async (c) => {
-    const resolved = resolveTarget(c.req.param('uid'), new URL(c.req.url).searchParams);
-    if ('error' in resolved) return c.json({ error: resolved.error }, resolved.status);
-    const { uid, target } = resolved;
+  app.all('*', async (c) => {
+    // Parse the raw URL, not the routed path, so percent-encoding reaches the upstream as sent.
+    const url = new URL(c.req.url);
+    const path = splitProxyPath(url.pathname);
+    if (!path) return c.json({ error: USAGE }, 404);
+    const { uid } = path;
+    const session = store.get(uid);
+    if (!session) return c.json({ error: `Unknown session "${uid}". Create it in the UI first.` }, 404);
 
-    const paused = store.getOrCreate(uid).paused;
+    const target = joinTarget(session.baseUrl, path.rest, url.search);
+    const paused = session.paused;
     const requestHeaders = headersToRecord(c.req.raw.headers);
     const tracker = new Tracker(store, log, {
       id: crypto.randomUUID(),
@@ -161,7 +167,6 @@ export function createProxyApp({ store, holds, config, log }: ProxyDeps): Hono {
     }
   });
 
-  app.notFound((c) => c.json({ error: USAGE }, 404));
   return app;
 }
 
