@@ -3,8 +3,12 @@
 ARG NODE_VERSION=24
 ARG PNPM_VERSION=12.6.0
 
+# Alpine on purpose: musl creates threads with clone(), while glibc on x86_64 (Debian slim)
+# tries clone3() first. Docker engines older than 20.10.10 reject clone3 with EPERM,
+# glibc does not fall back, and Node aborts with "uv_thread_create" failed.
+
 # --- base: node + pnpm + workspace manifests ------------------------------------
-FROM node:${NODE_VERSION}-slim AS base
+FROM node:${NODE_VERSION}-alpine AS base
 ARG PNPM_VERSION
 RUN npm install -g pnpm@${PNPM_VERSION} && npm cache clean --force
 WORKDIR /app
@@ -27,7 +31,7 @@ FROM base AS prod-deps
 RUN pnpm install --frozen-lockfile --prod --filter "@proxy-moxy/backend..."
 
 # --- runtime --------------------------------------------------------------------
-FROM node:${NODE_VERSION}-slim AS runtime
+FROM node:${NODE_VERSION}-alpine AS runtime
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     API_PORT=4000 \

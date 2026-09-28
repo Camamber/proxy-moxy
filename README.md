@@ -56,12 +56,27 @@ the public address.
 Files: [`Dockerfile`](Dockerfile), [`docker-compose.yml`](docker-compose.yml),
 [`deploy/Caddyfile`](deploy/Caddyfile), [`.env.example`](.env.example).
 
-The image runs the backend from its TypeScript sources on Node 24 LTS and serves
+The image runs the backend from its TypeScript sources on Node 24 LTS (Alpine) and serves
 the built UI on the API port. Compose puts Caddy in front: it obtains TLS
 certificates and routes `SITE_DOMAIN` to the UI and API, `PROXY_DOMAIN` to the proxy.
 
 **Run a single replica.** Sessions, history and held requests live in memory,
 so every restart or redeploy clears them.
+
+**The image is Alpine-based on purpose.** Docker engines older than 20.10.10 reject
+the `clone3` syscall, which glibc on x86_64 uses for threads, so Debian-based Node
+images abort there with `Assertion failed: (0) == (uv_thread_create(...))`. musl
+does not use `clone3`, so this image also builds on those engines. The compose file
+has no `version:` key, so the legacy `docker-compose` needs 1.27 or newer.
+
+An engine that old is still worth upgrading, with the official script:
+
+```sh
+for pkg in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do apt-get remove -y $pkg; done
+curl -fsSL https://get.docker.com | sh
+```
+
+On a 1 GB server, add swap if the build is killed with exit code 137.
 
 ### On a server
 
